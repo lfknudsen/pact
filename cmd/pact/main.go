@@ -34,14 +34,12 @@ func main() {
 		}
 		fmt.Printf("Pact has finished setting up.\n"+
 			"Please add the following location to your PATH:\n%s\n"+
-			"You will find a configuration file named '%s'\n"+
-			"in the directory %s.\n"+
-			"Change the value of the 'path' field inside if you'd like for Pact"+
-			"to download binaries to a different location than\n%s\n.",
+			"If you would prefer for Pact to download/manage its binaries somewhere"+
+			"else, you can change this by editing the 'path' field in\n"+
+			"%s.\n",
 			binDir,
-			configFilename,
-			configDir,
-			managedDirName)
+			filepath.Join(configDir, configFilename),
+		)
 		os.Exit(0)
 	}
 	if config == nil {
