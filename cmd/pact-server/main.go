@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -52,8 +53,8 @@ func search(ctx *gin.Context) {
 		_ = ctx.AbortWithError(http.StatusBadRequest, errors.New("query parameter is required"))
 		return
 	}
-	version, exists := ctx.Params.Get("version")
-	pkg, err := searchForPackage(query, version)
+	// This process unmarshals and then remarshals the package series file... for now
+	pkg, err := searchForPackageSeries(query)
 	if err != nil {
 		if err.Error() == "package not found" {
 			ctx.AbortWithStatus(404)
@@ -71,11 +72,7 @@ func download(ctx *gin.Context) {
 		_ = ctx.AbortWithError(http.StatusBadRequest, errors.New("'name' parameter is required"))
 		return
 	}
-	version, exists := ctx.Params.Get("version")
-	if !exists {
-		_ = ctx.AbortWithError(http.StatusBadRequest, errors.New("'version' parameter is required"))
-		return
-	}
+	version, _ := ctx.Params.Get("version")
 	pkg, err := searchForPackage(name, version)
 	if err != nil {
 		if err.Error() == "package not found" {
@@ -107,12 +104,37 @@ func searchForPackage(name string, version string) (*Package, error) {
 	return nil, errors.New("package not found")
 }
 
+func searchForPackageSeries(name string) (*PackageSeries, error) {
+	dir, err := os.ReadDir(packageDir)
+	if err != nil {
+		return nil, err
+	}
+	key := name + packageFileExt
+	for _, file := range dir {
+		if file.Name() == key {
+			filename := filepath.Join(packageDir, key)
+			return readPackageSeriesFile(filename)
+		}
+	}
+	return nil, errors.New(fmt.Sprintf("package '%s' not found", name))
+}
+
 func readPackageFile(path string) (*Package, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
 	var output *Package
+	err = json.Unmarshal(data, output)
+	return output, err
+}
+
+func readPackageSeriesFile(path string) (*PackageSeries, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var output *PackageSeries
 	err = json.Unmarshal(data, output)
 	return output, err
 }
@@ -132,7 +154,8 @@ type Package struct {
 }
 
 type PackageSeries struct {
-	Uuid     string            `json:"uuid"`
-	Title    string            `json:"title"`
-	Versions map[string]string `json:"versions"`
+	Uuid          string            `json:"uuid"`
+	Title         string            `json:"title"`
+	LatestVersion string            `json:"latest_version"`
+	Versions      map[string]string `json:"versions"` // version -> pkg uuid
 }
