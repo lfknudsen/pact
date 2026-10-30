@@ -146,8 +146,5 @@ func ensureDirsExist() error {
 	if err != nil {
 		return err
 	}
-	err = os.MkdirAll(pkgDir, 0755)
-	if err != nil {
-		return err
-	}
+	return os.MkdirAll(pkgDir, 0755)
 }
