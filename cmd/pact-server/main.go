@@ -69,15 +69,37 @@ func search(ctx *gin.Context) {
 		_ = ctx.AbortWithError(http.StatusBadRequest, errors.New("'name' parameter is required"))
 		return
 	}
-	// This process unmarshals and then remarshals the package series file... for now
-	pkg, err := searchForPackageSeries(name)
+	version := params.Get("version")
+	// If no version parameter was given, we grab the latest version.
+	if version == "" {
+		series, err := searchForPackageSeries(name)
+		if err != nil {
+			log.Println(err)
+			if err.Error() == fmt.Sprintf("package '%s' not found", name) {
+				_ = ctx.AbortWithError(http.StatusNotFound, err)
+			} else {
+				_ = ctx.AbortWithError(http.StatusInternalServerError, err)
+			}
+			return
+		}
+		version = series.LatestVersion
+	}
+
+	// Retrieve the specific package with the latest version.
+	filename := fmt.Sprintf("%s_%s%s", name, version, packageFileExt)
+	filename = filepath.Join(packageDir, filename)
+	pkg, err := readPackageFile(filename)
 	if err != nil {
 		log.Println(err)
 		if err.Error() == fmt.Sprintf("package '%s' not found", name) {
-			_ = ctx.AbortWithError(http.StatusNotFound, err)
+			ctx.AbortWithStatus(404)
 		} else {
-			_ = ctx.AbortWithError(http.StatusInternalServerError, err)
+			ctx.AbortWithStatus(500)
 		}
+		return
+	}
+	if pkg == nil {
+		ctx.AbortWithStatus(404)
 		return
 	}
 	ctx.JSON(200, pkg)
@@ -94,23 +116,13 @@ func download(ctx *gin.Context) {
 		return
 	}
 	version := params.Get("version")
-	// If no version supplied, find out what the latest version is.
 	if version == "" {
-		series, err := searchForPackageSeries(name)
-		if err != nil {
-			log.Println(err)
-			if err.Error() == fmt.Sprintf("package '%s' not found", name) {
-				_ = ctx.AbortWithError(http.StatusNotFound, err)
-			} else {
-				_ = ctx.AbortWithError(http.StatusInternalServerError, err)
-			}
-			return
-		}
-		version = series.LatestVersion
+		_ = ctx.AbortWithError(http.StatusBadRequest, errors.New("'version' parameter is required"))
+		return
 	}
 
-	// Retrieve the specific package with the latest version.
-	filename := filepath.Join(packageDir, name+"_"+version+packageFileExt)
+	filename := fmt.Sprintf("%s_%s%s", name, version, packageFileExt)
+	filename = filepath.Join(packageDir, filename)
 	pkg, err := readPackageFile(filename)
 	if err != nil {
 		log.Println(err)
