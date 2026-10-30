@@ -1,44 +1,65 @@
 package main
 
 import (
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"path/filepath"
 )
 
+func getExecDir() string {
+	execFile, err := os.Executable()
+	if err != nil {
+		panic(err)
+	}
+	return filepath.Dir(execFile)
+}
+
+var execDir = getExecDir()
+var managedDirName = ".pact"
+var managedDir = filepath.Join(execDir, managedDirName)
+var configDir = execDir
+var configFilename = ".pact-config.json"
+
 func main() {
-	path := os.Getenv("PACT_PATH")
-	if path == "" {
-		execFile, err := os.Executable()
+	config, err := readConfig()
+	if err != nil {
+		config, err = initConfig()
 		if err != nil {
 			panic(err)
 		}
-		execDir := filepath.Dir(execFile)
-		managedDir := filepath.Join(execDir, "bin")
-		err = os.Setenv("PACT_PATH", managedDir)
-		if err != nil {
-			fmt.Printf("Pact failed to set the environment variable PACT_PATH:\n%s\n", err)
-			os.Exit(1)
-		}
 		fmt.Printf("Pact has finished setting up.\n"+
 			"Please add the following location to your PATH:\n%s\n"+
-			"If you'd like to change where Pact installs and manages programmes,\n"+
-			"please change the value of the PACT_PACT environment variable,\n"+
-			"and add the new location to your PATH.", managedDir)
+			"You will find a configuration file named '%s'\n"+
+			"in the directory %s.\n"+
+			"Change the value of the 'path' field inside if you'd like for Pact"+
+			"to download binaries to a different location than\n%s\n.",
+			managedDir,
+			configFilename,
+			configDir,
+			managedDirName)
 		os.Exit(0)
 	}
+	if config == nil {
+		fmt.Printf("An error occurred parsing the config file. Aborting.\n")
+		os.Exit(1)
+	}
 
-	if len(os.Args) == 3 {
-		switch os.Args[1] {
-		case "install":
-			download(os.Args[2], path)
-		case "uninstall":
-			uninstall(os.Args[2], path)
-		case "upgrade", "update":
-			update(os.Args[2], path)
-		case "search":
-			search(os.Args[2], path)
-		}
+	if len(os.Args) != 3 {
+		fmt.Printf("Usage:\npact <name> [<version>]\n")
+		os.Exit(1)
+	}
+
+	switch os.Args[1] {
+	case "install":
+		download(os.Args[2], config.Path)
+	case "uninstall":
+		uninstall(os.Args[2], config.Path)
+	case "upgrade", "update":
+		update(os.Args[2], config.Path)
+	case "search":
+		search(os.Args[2], config.Path)
+
 	}
 }
 
@@ -55,4 +76,33 @@ func update(pkg string, path string) {
 }
 
 func search(pkg string, path string) {
+}
+
+type Config struct {
+	Path string `json:"path"`
+}
+
+func readConfig() (*Config, error) {
+	contents, err := os.ReadFile(filepath.Join(configDir, configFilename))
+	if err != nil {
+		return nil, err
+	}
+	var config *Config
+	err = json.Unmarshal(contents, config)
+	return config, err
+}
+
+func initConfig() (*Config, error) {
+	var config = Config{
+		Path: managedDir,
+	}
+	jsoned, err := json.Marshal(config)
+	if err != nil {
+		return nil, err
+	}
+	err = os.MkdirAll(managedDir, 0755)
+	if err != nil {
+		return nil, err
+	}
+	return &config, os.WriteFile(filepath.Join(configDir, configFilename), jsoned, 0600)
 }
