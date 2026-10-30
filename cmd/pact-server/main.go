@@ -43,8 +43,14 @@ func getExecutable() string {
 var execDir = getExecutable()
 var pactDirName = "pact"
 var packageDirName = "packages"
+var fileDirName = "files"
 var pactDir = filepath.Join(execDir, pactDirName)
+
+// packageDir contains the .json files for each package series.
 var packageDir = filepath.Join(pactDir, packageDirName)
+
+// fileDir contains the directories within which the actual files are located.
+var fileDir = filepath.Join(pactDir, fileDirName)
 var packageFileExt = ".json"
 
 func search(ctx *gin.Context) {
@@ -66,13 +72,31 @@ func search(ctx *gin.Context) {
 	ctx.JSON(200, pkg)
 }
 
+// download is the handler for the `/download` endpoint.
+// It retrieves a file which matches the given name (and optionally version),
+// and attaches it to the response.
 func download(ctx *gin.Context) {
 	name, exists := ctx.Params.Get("name")
 	if !exists {
 		_ = ctx.AbortWithError(http.StatusBadRequest, errors.New("'name' parameter is required"))
 		return
 	}
-	version, _ := ctx.Params.Get("version")
+	version, exists := ctx.Params.Get("version")
+	// If no version supplied, find out what the latest version is.
+	if !exists {
+		series, err := searchForPackageSeries(name)
+		if err != nil {
+			if err.Error() == fmt.Sprintf("package '%s' not found", name) {
+				ctx.AbortWithStatus(404)
+			} else {
+				ctx.AbortWithStatus(500)
+			}
+			return
+		}
+		version = series.LatestVersion
+	}
+
+	// Retrieve the specific package with the latest version.
 	pkg, err := searchForPackage(name, version)
 	if err != nil {
 		if err.Error() == fmt.Sprintf("package '%s' not found", name) {
@@ -86,7 +110,8 @@ func download(ctx *gin.Context) {
 		ctx.AbortWithStatus(404)
 		return
 	}
-	ctx.FileAttachment(pkg.Uuid, pkg.Title)
+
+	ctx.FileAttachment(pkg.Path(), pkg.Title)
 }
 
 func searchForPackage(name string, version string) (*Package, error) {
@@ -141,6 +166,7 @@ func readPackageSeriesFile(path string) (*PackageSeries, error) {
 
 type Package struct {
 	Uuid         string   `json:"uuid"`
+	Filename     string   `json:"filename"`
 	Checksum     string   `json:"checksum"`
 	Version      string   `json:"version"`
 	Title        string   `json:"title"`
@@ -151,6 +177,12 @@ type Package struct {
 	Authors      []string `json:"authors"`
 	Links        []string `json:"links"`
 	Dependencies []string `json:"dependencies"`
+	SeriesUuid   string   `json:"series_uuid"`
+}
+
+// Path returns the path to the file.
+func (pkg Package) Path() string {
+	return filepath.Join(fileDir, pkg.SeriesUuid, pkg.Filename)
 }
 
 type PackageSeries struct {
