@@ -1,10 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json/v2"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
+
+	. "pact/pkg"
 )
 
 func getExecDir() string {
@@ -54,30 +59,54 @@ func main() {
 
 	switch os.Args[1] {
 	case "install":
-		download(os.Args[2], config.Path)
+		download(os.Args[2], config)
 	case "uninstall":
-		uninstall(os.Args[2], config.Path)
+		uninstall(os.Args[2], config)
 	case "upgrade", "update":
-		update(os.Args[2], config.Path)
+		update(os.Args[2], config)
 	case "search":
-		search(os.Args[2], config.Path)
+		search(os.Args[2], config)
 
 	}
 }
 
-func download(pkg string, path string) {
+func download(pkg string, config *Config) {
 
 }
 
-func uninstall(pkg string, path string) {
+func uninstall(pkg string, config *Config) {
 
 }
 
-func update(pkg string, path string) {
+func update(pkg string, config *Config) {
 
 }
 
-func search(pkg string, path string) {
+func search(name string, config *Config) {
+	client := http.DefaultClient
+	url := fmt.Sprintf("%s?name=%s", config.URL, name)
+	resp, err := client.Get(url)
+	if err != nil {
+		panic(err)
+	}
+	defer func(Body io.ReadCloser) {
+		_ = Body.Close()
+	}(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		fmt.Print(resp.Body)
+		os.Exit(1)
+	}
+	var buf bytes.Buffer
+	_, err = io.Copy(&buf, resp.Body)
+	if err != nil {
+		panic(err)
+	}
+	var pkg *Package
+	err = json.Unmarshal(buf.Bytes(), pkg)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(pkg)
 }
 
 type Config struct {
@@ -104,9 +133,21 @@ func initConfig() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	err = os.MkdirAll(binDir, 0755)
+	err = ensureDirsExist()
 	if err != nil {
 		return nil, err
 	}
+
 	return &config, os.WriteFile(filepath.Join(configDir, configFilename), jsoned, 0600)
+}
+
+func ensureDirsExist() error {
+	err := os.MkdirAll(binDir, 0755)
+	if err != nil {
+		return err
+	}
+	err = os.MkdirAll(pkgDir, 0755)
+	if err != nil {
+		return err
+	}
 }
