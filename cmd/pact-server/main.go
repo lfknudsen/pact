@@ -14,6 +14,15 @@ import (
 )
 
 func main() {
+	err := os.MkdirAll(packageDir, 0755)
+	if err != nil {
+		log.Fatal(err)
+	}
+	err = os.MkdirAll(fileDir, 0755)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	engine := gin.Default()
 	engine.Handle("GET", "/", func(c *gin.Context) {
 		c.String(http.StatusOK, "Hello, World!")
@@ -54,18 +63,20 @@ var fileDir = filepath.Join(pactDir, fileDirName)
 var packageFileExt = ".json"
 
 func search(ctx *gin.Context) {
-	query, exists := ctx.Params.Get("query")
-	if !exists {
-		_ = ctx.AbortWithError(http.StatusBadRequest, errors.New("query parameter is required"))
+	params := ctx.Request.URL.Query()
+	name := params.Get("name")
+	if name == "" {
+		_ = ctx.AbortWithError(http.StatusBadRequest, errors.New("'name' parameter is required"))
 		return
 	}
 	// This process unmarshals and then remarshals the package series file... for now
-	pkg, err := searchForPackageSeries(query)
+	pkg, err := searchForPackageSeries(name)
 	if err != nil {
-		if err.Error() == "package not found" {
-			ctx.AbortWithStatus(404)
+		log.Println(err)
+		if err.Error() == fmt.Sprintf("package '%s' not found", name) {
+			_ = ctx.AbortWithError(http.StatusNotFound, err)
 		} else {
-			ctx.AbortWithStatus(500)
+			_ = ctx.AbortWithError(http.StatusInternalServerError, err)
 		}
 		return
 	}
@@ -76,20 +87,22 @@ func search(ctx *gin.Context) {
 // It retrieves a file which matches the given name (and optionally version),
 // and attaches it to the response.
 func download(ctx *gin.Context) {
-	name, exists := ctx.Params.Get("name")
-	if !exists {
+	params := ctx.Request.URL.Query()
+	name := params.Get("name")
+	if name == "" {
 		_ = ctx.AbortWithError(http.StatusBadRequest, errors.New("'name' parameter is required"))
 		return
 	}
-	version, exists := ctx.Params.Get("version")
+	version := params.Get("version")
 	// If no version supplied, find out what the latest version is.
-	if !exists {
+	if version == "" {
 		series, err := searchForPackageSeries(name)
 		if err != nil {
+			log.Println(err)
 			if err.Error() == fmt.Sprintf("package '%s' not found", name) {
-				ctx.AbortWithStatus(404)
+				_ = ctx.AbortWithError(http.StatusNotFound, err)
 			} else {
-				ctx.AbortWithStatus(500)
+				_ = ctx.AbortWithError(http.StatusInternalServerError, err)
 			}
 			return
 		}
@@ -97,8 +110,10 @@ func download(ctx *gin.Context) {
 	}
 
 	// Retrieve the specific package with the latest version.
-	pkg, err := searchForPackage(name, version)
+	filename := filepath.Join(packageDir, name+"_"+version+packageFileExt)
+	pkg, err := readPackageFile(filename)
 	if err != nil {
+		log.Println(err)
 		if err.Error() == fmt.Sprintf("package '%s' not found", name) {
 			ctx.AbortWithStatus(404)
 		} else {
@@ -149,7 +164,7 @@ func readPackageFile(path string) (*Package, error) {
 	if err != nil {
 		return nil, err
 	}
-	var output *Package
+	output := new(Package)
 	err = json.Unmarshal(data, output)
 	return output, err
 }
@@ -159,7 +174,7 @@ func readPackageSeriesFile(path string) (*PackageSeries, error) {
 	if err != nil {
 		return nil, err
 	}
-	var output *PackageSeries
+	output := new(PackageSeries)
 	err = json.Unmarshal(data, output)
 	return output, err
 }

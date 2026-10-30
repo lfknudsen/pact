@@ -10,6 +10,10 @@ type PackageSeries struct {
 	LatestVersion string `json:"latest_version"`
 }
 
+func (pkg *PackageSeries) String() string {
+	return fmt.Sprintf("%s v%s", pkg.Title, pkg.LatestVersion)
+}
+
 type Package struct {
 	Uuid         string   `json:"uuid"`
 	Filename     string   `json:"filename"`

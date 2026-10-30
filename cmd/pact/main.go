@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	. "pact/pkg"
 )
@@ -33,6 +34,7 @@ var configFilename = ".pact-config.json"
 func main() {
 	config, err := readConfig()
 	if err != nil {
+		fmt.Println(err)
 		config, err = initConfig()
 		if err != nil {
 			panic(err)
@@ -58,7 +60,7 @@ func main() {
 	}
 
 	switch os.Args[1] {
-	case "install":
+	case "download", "install":
 		download(os.Args[2], config)
 	case "uninstall":
 		uninstall(os.Args[2], config)
@@ -66,12 +68,39 @@ func main() {
 		update(os.Args[2], config)
 	case "search":
 		search(os.Args[2], config)
-
+	default:
+		fmt.Printf("Unrecognized command '%s'.\n", os.Args[1])
+		os.Exit(1)
 	}
 }
 
-func download(pkg string, config *Config) {
-
+func download(name string, config *Config) {
+	client := http.DefaultClient
+	url := fmt.Sprintf("%s/%s?name=%s", config.URL, "download", name)
+	url = strings.TrimPrefix(url, "https://")
+	if !strings.HasPrefix(url, "http://") {
+		url = "http://" + url
+	}
+	resp, err := client.Get(url)
+	if err != nil {
+		panic(err)
+	}
+	defer func(Body io.ReadCloser) {
+		_ = Body.Close()
+	}(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		fmt.Print(resp.Body)
+		os.Exit(1)
+	}
+	file, err := os.OpenFile(filepath.Join(binDir, "guid.exe"), os.O_RDWR|os.O_CREATE, 0600)
+	if err != nil {
+		panic(err)
+	}
+	defer file.Close()
+	_, err = io.Copy(file, resp.Body)
+	if err != nil {
+		panic(err)
+	}
 }
 
 func uninstall(pkg string, config *Config) {
@@ -84,7 +113,12 @@ func update(pkg string, config *Config) {
 
 func search(name string, config *Config) {
 	client := http.DefaultClient
-	url := fmt.Sprintf("%s?name=%s", config.URL, name)
+	url := fmt.Sprintf("%s/%s?name=%s", config.URL, "search", name)
+	url = strings.TrimPrefix(url, "https://")
+	if !strings.HasPrefix(url, "http://") {
+		url = "http://" + url
+	}
+	fmt.Println("URL:\n", url)
 	resp, err := client.Get(url)
 	if err != nil {
 		panic(err)
@@ -101,7 +135,8 @@ func search(name string, config *Config) {
 	if err != nil {
 		panic(err)
 	}
-	var pkg *Package
+	fmt.Printf("Body:\n%s\n", buf.Bytes())
+	pkg := new(PackageSeries)
 	err = json.Unmarshal(buf.Bytes(), pkg)
 	if err != nil {
 		panic(err)
@@ -119,7 +154,7 @@ func readConfig() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	var config *Config
+	config := new(Config)
 	err = json.Unmarshal(contents, config)
 	return config, err
 }
@@ -127,9 +162,9 @@ func readConfig() (*Config, error) {
 func initConfig() (*Config, error) {
 	var config = Config{
 		Path: managedDir,
-		URL:  "localhost:8082",
+		URL:  "http://localhost:8082",
 	}
-	jsoned, err := json.Marshal(config)
+	jsoned, err := json.Marshal(&config)
 	if err != nil {
 		return nil, err
 	}
