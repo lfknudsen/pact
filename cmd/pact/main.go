@@ -70,6 +70,8 @@ func main() {
 		update(os.Args[2])
 	case "search":
 		search(os.Args[2])
+	case "versions":
+		versions()
 	default:
 		fmt.Printf("Unrecognized command '%s'.\n", os.Args[1])
 		os.Exit(1)
@@ -173,6 +175,39 @@ func search(name string) {
 		os.Exit(1)
 	}
 	fmt.Println(pkg)
+}
+
+func versions() {
+	name := os.Args[2]
+	client := http.DefaultClient
+	url := fmt.Sprintf("%s/%s?name=%s", config.URL, "versions", name)
+	url = strings.TrimPrefix(url, "https://")
+	if !strings.HasPrefix(url, "http://") {
+		url = "http://" + url
+	}
+	resp, err := client.Get(url)
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+	defer func(Body io.ReadCloser) {
+		_ = Body.Close()
+	}(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		fmt.Print(resp.Body)
+		os.Exit(1)
+	}
+	var buf bytes.Buffer
+	_, err = io.Copy(&buf, resp.Body)
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+	list := make([]string, 0, 10)
+	err = json.Unmarshal(buf.Bytes(), &list)
+	for _, ver := range list {
+		fmt.Println(ver)
+	}
 }
 
 type Config struct {

@@ -5,9 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -28,6 +32,7 @@ func main() {
 		c.String(http.StatusOK, "Hello, World!")
 	})
 	engine.Handle("GET", "/search", search)
+	engine.Handle("GET", "/versions", versions)
 	engine.Handle("GET", "/download", download)
 	server := &http.Server{
 		Addr:           ":8082",
@@ -154,6 +159,58 @@ func searchForPackage(name string, version string) (*Package, error) {
 		}
 	}
 	return nil, errors.New(fmt.Sprintf("package '%s' not found", name))
+}
+
+func versions(ctx *gin.Context) {
+	params := ctx.Request.URL.Query()
+	name := params.Get("name")
+	if name == "" {
+		_ = ctx.AbortWithError(http.StatusBadRequest, errors.New("'name' parameter is required"))
+		return
+	}
+	series, err := searchForPackageSeries(name)
+	if err != nil {
+		log.Println(err)
+		if err.Error() == fmt.Sprintf("package '%s' not found", name) {
+			_ = ctx.AbortWithError(http.StatusNotFound, err)
+		} else {
+			_ = ctx.AbortWithError(http.StatusInternalServerError, err)
+		}
+		return
+	}
+	if series == nil {
+		log.Println("no series found")
+		_ = ctx.AbortWithError(http.StatusNotFound, err)
+		return
+	}
+	listVer := slices.Collect(maps.Keys(series.Versions))
+	slices.SortFunc[[]string](listVer, cmpVersions)
+	ctx.JSON(200, &listVer)
+}
+
+func cmpVersions(a string, b string) int {
+	aSplit := strings.Split(a, ".")
+	bSplit := strings.Split(b, ".")
+	if len(aSplit) != len(bSplit) {
+		return 0
+	}
+	for i := range aSplit {
+		aInt, err := strconv.ParseInt(aSplit[i], 10, 64)
+		if err != nil {
+			return 0
+		}
+		bInt, err := strconv.ParseInt(bSplit[i], 10, 64)
+		if err != nil {
+			return 0
+		}
+		if aInt > bInt {
+			return -1
+		}
+		if aInt < bInt {
+			return 1
+		}
+	}
+	return 0
 }
 
 func searchForPackageSeries(name string) (*PackageSeries, error) {
