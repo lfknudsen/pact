@@ -101,7 +101,7 @@ func searchForPackage(name string, version string) (*Package, error) {
 			return readPackageFile(filename)
 		}
 	}
-	return nil, errors.New("package not found")
+	return nil, errors.New(fmt.Sprintf("package '%s' not found", name))
 }
 
 func searchForPackageSeries(name string) (*PackageSeries, error) {
