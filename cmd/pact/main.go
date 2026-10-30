@@ -84,6 +84,7 @@ func search(pkg string, path string) {
 
 type Config struct {
 	Path string `json:"path"`
+	URL  string `json:"url"`
 }
 
 func readConfig() (*Config, error) {
@@ -99,6 +100,7 @@ func readConfig() (*Config, error) {
 func initConfig() (*Config, error) {
 	var config = Config{
 		Path: managedDir,
+		URL:  "localhost:8082",
 	}
 	jsoned, err := json.Marshal(config)
 	if err != nil {
