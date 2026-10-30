@@ -17,7 +17,11 @@ func getExecDir() string {
 
 var execDir = getExecDir()
 var managedDirName = ".pact"
+var binDirName = "bin"
+var pkgDirName = "pkg"
 var managedDir = filepath.Join(execDir, managedDirName)
+var binDir = filepath.Join(managedDir, binDirName)
+var pkgDir = filepath.Join(managedDir, pkgDirName)
 var configDir = execDir
 var configFilename = ".pact-config.json"
 
@@ -34,7 +38,7 @@ func main() {
 			"in the directory %s.\n"+
 			"Change the value of the 'path' field inside if you'd like for Pact"+
 			"to download binaries to a different location than\n%s\n.",
-			managedDir,
+			binDir,
 			configFilename,
 			configDir,
 			managedDirName)
@@ -100,7 +104,7 @@ func initConfig() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	err = os.MkdirAll(managedDir, 0755)
+	err = os.MkdirAll(binDir, 0755)
 	if err != nil {
 		return nil, err
 	}
