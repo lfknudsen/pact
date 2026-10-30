@@ -75,7 +75,7 @@ func download(ctx *gin.Context) {
 	version, _ := ctx.Params.Get("version")
 	pkg, err := searchForPackage(name, version)
 	if err != nil {
-		if err.Error() == "package not found" {
+		if err.Error() == fmt.Sprintf("package '%s' not found", name) {
 			ctx.AbortWithStatus(404)
 		} else {
 			ctx.AbortWithStatus(500)
