@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	. "pact/pkg"
@@ -58,7 +59,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if len(os.Args) < 3 {
+	if len(os.Args) < 2 {
 		fmt.Printf("Usage:\npact <name> [<version>]\n")
 		os.Exit(1)
 	}
@@ -255,14 +256,81 @@ func ensureDirsExist() error {
 	return os.MkdirAll(pkgDir, 0755)
 }
 
+var rxTitleDescription = regexp.MustCompile(`\s*#([^\r\n]+)\s*([^#]+)`)
+var rxUsage = regexp.MustCompile(`(?s)## Usage:?\s+(.*)(:?\n##\s*[^#])`)
+
 func push() {
-	if len(os.Args) < 4 {
-		fmt.Println("Need to supply paths to a package .json file, and the binary file.")
+	pwd, err := filepath.Abs(".")
+	if err != nil {
+		pwd = "."
+	}
+	filename1 := filepath.Join(pwd, "README.md")
+	content, err := os.ReadFile(filename1)
+	if err != nil {
+		filename2 := filepath.Join(pwd, "README.MD")
+		content, err = os.ReadFile(filename2)
+		if err != nil {
+			ERROR("failed to open '" + filename1 + "'.")
+			os.Exit(1)
+		}
+	}
+	match := rxTitleDescription.FindSubmatch(content)
+	if match == nil {
+		ERROR("failed to find a title and description in '" + filename1 + "'.")
 		os.Exit(1)
 	}
-	packageFilename := os.Args[2]
-	binaryFilename := os.Args[3]
-	upload(packageFilename, binaryFilename)
+	title := match[1]
+	description := match[2]
+
+	match = rxUsage.FindSubmatch(content)
+	if match == nil {
+		ERROR("failed to find a usage section (with a ## section beneath) in '" + filename1 + "'.")
+		os.Exit(1)
+	}
+	usage := match[1]
+	release := NewRelease(title, description, usage)
+	dir, _ := os.Getwd()
+	projectName := filepath.Base(dir)
+	projectInfoFilename := projectName + ".md"
+	fmt.Println("Output packet filename:", projectInfoFilename)
+	err = os.WriteFile(projectInfoFilename, release.Markdown(), 0600)
+	if err != nil {
+		ERROR("failed to write '"+projectInfoFilename+"':", err.Error())
+	}
+
+	binFilename := projectName
+	if len(os.Args) > 2 {
+		binFilename = os.Args[2]
+	} else {
+		if _, err = os.Stat(binFilename); os.IsNotExist(err) {
+			binFilename = binFilename + ".exe"
+			if _, err = os.Stat(binFilename); os.IsNotExist(err) {
+				ERROR("failed to find '"+binFilename+"':", err.Error())
+			}
+		}
+	}
+	upload(projectInfoFilename, binFilename)
+}
+
+type Release struct {
+	title       string
+	description string
+	usage       string
+}
+
+func NewRelease(title, description, usage []byte) *Release {
+	return &Release{
+		title:       string(title),
+		description: string(description),
+		usage:       string(usage),
+	}
+}
+
+func (r *Release) Markdown() []byte {
+	return []byte(fmt.Sprintf("# %s\n\n%s\n\n## Usage\n\n%s",
+		strings.TrimSpace(r.title),
+		strings.TrimSpace(r.description),
+		strings.TrimSpace(r.usage)))
 }
 
 func upload(packageFilename, binaryFilename string) {
@@ -297,12 +365,19 @@ func upload(packageFilename, binaryFilename string) {
 	fmt.Printf("Wrote %d bytes from %s\n", n, filename)
 	closeFile(file)
 	closeWriter(mpWriter)
-	req, err := http.NewRequest("POST", config.URL, &b)
+	url := strings.TrimPrefix(config.URL, "https://")
+	if !strings.HasPrefix(url, "http://") {
+		url = "http://" + url
+	}
+	url += "/push"
+	fmt.Println("URL: " + url)
+	req, err := http.NewRequest("PUT", url, &b)
 	if err != nil {
 		log.Fatal(err)
 	}
 	req.Header.Add("Content-Type", mpWriter.FormDataContentType())
 	client := http.DefaultClient
+
 	resp, err := client.Do(req)
 	if err != nil {
 		fmt.Println("Error occurred:")
@@ -347,4 +422,8 @@ func Copy(dst io.Writer, src io.Reader) {
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+func ERROR(msg ...any) {
+	_, _ = fmt.Fprintln(os.Stderr, msg...)
 }
