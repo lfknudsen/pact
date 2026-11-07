@@ -5,6 +5,8 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"io"
+	"log"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -72,6 +74,8 @@ func main() {
 		search(os.Args[2])
 	case "versions":
 		versions()
+	case "push":
+		push()
 	default:
 		fmt.Printf("Unrecognized command '%s'.\n", os.Args[1])
 		os.Exit(1)
@@ -118,11 +122,12 @@ func download() {
 	if err != nil {
 		panic(err)
 	}
-	defer file.Close()
 	_, err = io.Copy(file, resp.Body)
 	if err != nil {
+		_ = file.Close()
 		panic(err)
 	}
+	_ = file.Close()
 }
 
 func uninstall(pkg string) {
@@ -248,4 +253,98 @@ func ensureDirsExist() error {
 		return err
 	}
 	return os.MkdirAll(pkgDir, 0755)
+}
+
+func push() {
+	if len(os.Args) < 4 {
+		fmt.Println("Need to supply paths to a package .json file, and the binary file.")
+		os.Exit(1)
+	}
+	packageFilename := os.Args[2]
+	binaryFilename := os.Args[3]
+	upload(packageFilename, binaryFilename)
+}
+
+func upload(packageFilename, binaryFilename string) {
+	var b bytes.Buffer
+	mpWriter := multipart.NewWriter(&b)
+	wr, err := mpWriter.CreateFormField("package")
+	if err != nil {
+		panic(err)
+	}
+	contents := Open(packageFilename)
+	defer closeFile(contents)
+	_, err = io.Copy(wr, contents)
+	if err != nil {
+		panic(err)
+	}
+
+	file := Open(binaryFilename)
+	filename := filepath.Base(file.Name())
+	fw, err := mpWriter.CreateFormFile("file", filename)
+	if err != nil {
+		_ = mpWriter.Close()
+		closeFile(file)
+		log.Fatal(err)
+	}
+
+	n, err := io.Copy(fw, file)
+	if err != nil {
+		_ = mpWriter.Close()
+		closeFile(file)
+		log.Fatal(err)
+	}
+	fmt.Printf("Wrote %d bytes from %s\n", n, filename)
+	closeFile(file)
+	closeWriter(mpWriter)
+	req, err := http.NewRequest("POST", config.URL, &b)
+	if err != nil {
+		log.Fatal(err)
+	}
+	req.Header.Add("Content-Type", mpWriter.FormDataContentType())
+	client := http.DefaultClient
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Println("Error occurred:")
+		log.Fatal(err)
+	}
+	fmt.Printf("%d: %s\n", resp.StatusCode, resp.Status)
+	if resp.StatusCode != 200 {
+		Close(resp.Body)
+		log.Fatalf("Status code was not 200, but %d\n", resp.StatusCode)
+	}
+	Close(resp.Body)
+}
+
+func Close(body io.ReadCloser) {
+	if body != nil {
+		_ = body.Close()
+	}
+}
+
+func Open(filename string) *os.File {
+	file, err := os.Open(filename)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return file
+}
+
+func closeWriter(w *multipart.Writer) {
+	if w != nil {
+		_ = w.Close()
+	}
+}
+
+func closeFile(f *os.File) {
+	if f != nil {
+		_ = f.Close()
+	}
+}
+
+func Copy(dst io.Writer, src io.Reader) {
+	_, err := io.Copy(dst, src)
+	if err != nil {
+		log.Fatal(err)
+	}
 }
