@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/gin-gonic/gin"
 )
@@ -34,6 +35,7 @@ func main() {
 	engine.Handle("GET", "/search", search)
 	engine.Handle("GET", "/versions", versions)
 	engine.Handle("GET", "/download", download)
+	engine.Handle("PUT", "/push", receivePush)
 	server := &http.Server{
 		Addr:           ":8082",
 		Handler:        engine,
@@ -146,19 +148,78 @@ func download(ctx *gin.Context) {
 	ctx.FileAttachment(pkg.Path(), pkg.Title)
 }
 
-func searchForPackage(name string, version string) (*Package, error) {
-	dir, err := os.ReadDir(packageDir)
+func receivePush(c *gin.Context) {
+	log.Println("Received request to upload one file from", c.Request.RemoteAddr)
+	err := c.Request.ParseMultipartForm(32 << 20)
 	if err != nil {
-		return nil, err
+		log.Println(err)
+		c.String(http.StatusBadRequest, "parse form err: %s", err.Error())
+		return
 	}
-	needle := name + "_" + version
-	for _, file := range dir {
-		if file.Name() == needle {
-			filename := filepath.Join(packageDir, file.Name()+packageFileExt)
-			return readPackageFile(filename)
+	pkgStr, found := c.GetPostForm("package")
+	if !found {
+		c.String(http.StatusBadRequest, "missing 'package' form field")
+		return
+	}
+	pkg := &Package{}
+	err = json.Unmarshal([]byte(pkgStr), pkg)
+	if err != nil {
+		log.Println(err)
+		c.String(http.StatusBadRequest, "parse form err: %s", err.Error())
+		return
+	}
+
+	file, err := c.FormFile("file")
+	if err != nil {
+		log.Println(err)
+		c.String(http.StatusBadRequest, "get form err: %s", err.Error())
+		return
+	}
+	pkg.Uuid = uuid.New().String()
+	pkg.Filename = sanitiseFilename(pkg.Filename)
+	file.Filename = pkg.AssembleFilename()
+	err = c.SaveUploadedFile(file, pkg.Path())
+	if err != nil {
+		log.Println(err)
+		c.String(http.StatusBadRequest, "save err: %s", err.Error())
+		return
+	}
+	c.String(http.StatusOK, "upload success")
+}
+
+func push(ctx *gin.Context) {
+	pkg := new(Package)
+	if err := ctx.BindJSON(pkg); err != nil {
+		err = ctx.AbortWithError(http.StatusBadRequest, err)
+		if err != nil {
+			log.Println(err)
 		}
+		return
 	}
-	return nil, errors.New(fmt.Sprintf("package '%s' not found", name))
+	filename := fmt.Sprintf("%s_%s%s", pkg.Title, pkg.Version, packageFileExt)
+	filename = filepath.Join(packageDir, filename)
+	_, err := readPackageFile(filename)
+	if err == nil {
+		ctx.AbortWithStatus(200)
+		return
+	}
+	encoded, err := json.Marshal(pkg)
+	if err != nil {
+		err = ctx.AbortWithError(http.StatusInternalServerError, err)
+		if err != nil {
+			log.Println(err)
+		}
+		return
+	}
+	err = os.WriteFile(pkg.Path(), encoded, 0644)
+	if err != nil {
+		err = ctx.AbortWithError(http.StatusInternalServerError, err)
+		if err != nil {
+			log.Println(err)
+		}
+		return
+	}
+	return
 }
 
 func versions(ctx *gin.Context) {
@@ -264,9 +325,18 @@ type Package struct {
 	SeriesUuid   string   `json:"series_uuid"`
 }
 
+func (pkg Package) AssembleFilename() string {
+	stem, ext := splitExt(pkg.Filename)
+	return fmt.Sprintf("%s_%s%s", stem, pkg.Version, ext)
+}
+
 // Path returns the path to the file.
 func (pkg Package) Path() string {
-	return filepath.Join(fileDir, pkg.SeriesUuid, pkg.Filename)
+	return filepath.Join(pkg.Dir(), pkg.AssembleFilename())
+}
+
+func (pkg Package) Dir() string {
+	return filepath.Join(fileDir, pkg.SeriesUuid)
 }
 
 type PackageSeries struct {
@@ -274,4 +344,35 @@ type PackageSeries struct {
 	Title         string            `json:"title"`
 	LatestVersion string            `json:"latest_version"`
 	Versions      map[string]string `json:"versions"` // version -> pkg uuid
+}
+
+// As per https://github.com/gin-gonic/gin/issues/1693
+func sanitiseFilename(filename string) string {
+	filename = filepath.Clean(filename)
+	filename = filepath.Base(filename)
+	return filename
+}
+
+// splitExt returns the stem and extension of the given filename.
+func splitExt(filename string) (stem string, ext string) {
+	extStart := strings.LastIndex(filename, ".")
+	if extStart == -1 {
+		return filename, ""
+	}
+	return filename[:extStart], filename[extStart:]
+}
+
+// generateUniqueFilename appends the filename with a (<number>) if a file with
+// the given name already exists in PlumeDir.
+func generateUniqueFilename(dir string, filename string) string {
+	counter := 1
+	newFilename := filename
+	stem, ext := splitExt(filename)
+	_, err := os.Stat(filepath.Join(dir, filename))
+	for err == nil {
+		newFilename = fmt.Sprintf("%s (%d)%s", stem, counter, ext)
+		_, err = os.Stat(filepath.Join(dir, newFilename))
+		counter++
+	}
+	return newFilename
 }
